@@ -22,6 +22,17 @@ const DEFAULT_CONTEXT_LENGTH = 128000;
  */
 export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	private _chatEndpoints: { model: string; modelMaxPromptTokens: number }[] = [];
+
+	/** Cache for the model list from the HF router. */
+	private _modelsCache: { models: HFModelItem[]; fetchedAt: number } | undefined;
+
+	/** EventEmitter used to signal that the model list has changed. */
+	private _onDidChangeLanguageModelInformation = new vscode.EventEmitter<void>();
+
+	/** Fires when the available model list changes (e.g. after a manual refresh). */
+	readonly onDidChangeLanguageModelInformation: vscode.Event<void> =
+		this._onDidChangeLanguageModelInformation.event;
+
 	/** Buffer for assembling streamed tool calls by index. */
 	private _toolCallBuffers: Map<number, { id?: string; name?: string; args: string }> = new Map<
 		number,
@@ -55,6 +66,15 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	 * @param secrets VS Code secret storage.
 	 */
 	constructor(private readonly secrets: vscode.SecretStorage, private readonly userAgent: string) {}
+
+	/**
+	 * Invalidate the cached model list and notify VS Code that available models have changed.
+	 * Call this when the user requests a manual refresh.
+	 */
+	invalidateCache(): void {
+		this._modelsCache = undefined;
+		this._onDidChangeLanguageModelInformation.fire();
+	}
 
 	/** Roughly estimate tokens for VS Code chat messages (text only) */
 	private estimateMessagesTokens(msgs: readonly vscode.LanguageModelChatMessage[]): number {
@@ -97,6 +117,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 		const { models } = await this.fetchModels(apiKey);
 
+		const cfg = vscode.workspace.getConfiguration("huggingface");
+		const routing = cfg.get<string>("routing", "all");
+		const includeNonTool = cfg.get<boolean>("includeNonToolModels", false);
+
 		const infos: LanguageModelChatInformation[] = models.flatMap((m) => {
 			const providers = m?.providers ?? [];
 			const modalities = m.architecture?.input_modalities ?? [];
@@ -117,48 +141,56 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					toolCalling: true,
 					imageInput: vision,
 				};
-				entries.push({
-					id: `${m.id}:cheapest`,
-					name: `${m.id} (cheapest)`,
-					tooltip: "Hugging Face via the cheapest provider",
-					family: "huggingface",
-					version: "1.0.0",
-					maxInputTokens: maxInput,
-					maxOutputTokens: maxOutput,
-					capabilities: aggregateCapabilities,
-				} satisfies LanguageModelChatInformation);
-				entries.push({
-					id: `${m.id}:fastest`,
-					name: `${m.id} (fastest)`,
-					tooltip: "Hugging Face via the fastest provider",
-					family: "huggingface",
-					version: "1.0.0",
-					maxInputTokens: maxInput,
-					maxOutputTokens: maxOutput,
-					capabilities: aggregateCapabilities,
-				} satisfies LanguageModelChatInformation);
+
+				if (routing === "all" || routing === "cheapest") {
+					entries.push({
+						id: `${m.id}:cheapest`,
+						name: `${m.id} (cheapest)`,
+						tooltip: "Hugging Face via the cheapest provider",
+						family: "huggingface",
+						version: "1.0.0",
+						maxInputTokens: maxInput,
+						maxOutputTokens: maxOutput,
+						capabilities: aggregateCapabilities,
+					} satisfies LanguageModelChatInformation);
+				}
+
+				if (routing === "all" || routing === "fastest") {
+					entries.push({
+						id: `${m.id}:fastest`,
+						name: `${m.id} (fastest)`,
+						tooltip: "Hugging Face via the fastest provider",
+						family: "huggingface",
+						version: "1.0.0",
+						maxInputTokens: maxInput,
+						maxOutputTokens: maxOutput,
+						capabilities: aggregateCapabilities,
+					} satisfies LanguageModelChatInformation);
+				}
+
+				if (routing === "all") {
+					for (const p of toolProviders) {
+						const contextLen = p?.context_length ?? DEFAULT_CONTEXT_LENGTH;
+						const pMaxOutput = DEFAULT_MAX_OUTPUT_TOKENS;
+						const pMaxInput = Math.max(1, contextLen - pMaxOutput);
+						entries.push({
+							id: `${m.id}:${p.provider}`,
+							name: `${m.id} via ${p.provider}`,
+							tooltip: `Hugging Face via ${p.provider}`,
+							family: "huggingface",
+							version: "1.0.0",
+							maxInputTokens: pMaxInput,
+							maxOutputTokens: pMaxOutput,
+							capabilities: {
+								toolCalling: true,
+								imageInput: vision,
+							},
+						} satisfies LanguageModelChatInformation);
+					}
+				}
 			}
 
-			for (const p of toolProviders) {
-				const contextLen = p?.context_length ?? DEFAULT_CONTEXT_LENGTH;
-				const maxOutput = DEFAULT_MAX_OUTPUT_TOKENS;
-				const maxInput = Math.max(1, contextLen - maxOutput);
-				entries.push({
-					id: `${m.id}:${p.provider}`,
-					name: `${m.id} via ${p.provider}`,
-					tooltip: `Hugging Face via ${p.provider}`,
-					family: "huggingface",
-					version: "1.0.0",
-					maxInputTokens: maxInput,
-					maxOutputTokens: maxOutput,
-					capabilities: {
-						toolCalling: true,
-						imageInput: vision,
-					},
-				} satisfies LanguageModelChatInformation);
-			}
-
-			if (toolProviders.length === 0 && providers.length > 0) {
+			if (toolProviders.length === 0 && providers.length > 0 && includeNonTool) {
 				const base = providers[0];
 				const contextLen = base?.context_length ?? DEFAULT_CONTEXT_LENGTH;
 				const maxOutput = DEFAULT_MAX_OUTPUT_TOKENS;
@@ -198,11 +230,20 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 	/**
 	 * Fetch the list of models and supplementary metadata from Hugging Face.
+	 * Responses are cached for a configurable TTL to reduce API traffic.
 	 * @param apiKey The HF API key used to authenticate.
 	 */
 	private async fetchModels(
 		apiKey: string
 	): Promise<{ models: HFModelItem[] }> {
+		const cfg = vscode.workspace.getConfiguration("huggingface");
+		const ttlMinutes = cfg.get<number>("modelCacheTtlMinutes", 5);
+		const ttlMs = Math.max(1, ttlMinutes) * 60 * 1000;
+
+		if (this._modelsCache && Date.now() - this._modelsCache.fetchedAt < ttlMs) {
+			return { models: this._modelsCache.models };
+		}
+
 			const modelsList = (async () => {
 				const resp = await fetch(`${BASE_URL}/models`, {
 					method: "GET",
@@ -227,6 +268,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 			try {
 				const models = await modelsList;
+				this._modelsCache = { models, fetchedAt: Date.now() };
 				return { models };
 			} catch (err) {
 				console.error("[Hugging Face Model Provider] Failed to fetch Hugging Face models", err);
@@ -303,8 +345,13 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
                 model: model.id,
                 messages: openaiMessages,
                 stream: true,
-                max_tokens: Math.min(options.modelOptions?.max_tokens || 4096, model.maxOutputTokens),
-                temperature: options.modelOptions?.temperature ?? 0.7,
+                max_tokens: Math.min(
+					options.modelOptions?.max_tokens ||
+						vscode.workspace.getConfiguration("huggingface").get<number>("maxOutputTokens", 4096),
+					model.maxOutputTokens
+				),
+                temperature: options.modelOptions?.temperature ??
+					vscode.workspace.getConfiguration("huggingface").get<number>("defaultTemperature", 0.7),
             };
 
 			// Allow-list model options

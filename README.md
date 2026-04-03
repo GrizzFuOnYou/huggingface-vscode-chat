@@ -26,6 +26,36 @@ Each model entry also offers `cheapest` and `fastest` mode for each model. `fast
 
 ---
 
+## 🆕 Features
+
+### Status bar indicator
+A **HF** item appears in the VS Code status bar showing whether an API key is configured. Click it to open the API key management dialog.
+
+### Additional commands
+Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and search for:
+
+| Command | Description |
+|---|---|
+| `Manage Hugging Face Provider` | Set or update your API key |
+| `Clear Hugging Face API Key` | Remove the stored API key |
+| `Refresh Hugging Face Model List` | Force a fresh fetch of available models |
+
+### Settings (`huggingface.*`)
+All settings are available under **File → Preferences → Settings** → search **"Hugging Face"**.
+
+| Setting | Default | Description |
+|---|---|---|
+| `huggingface.routing` | `all` | Which routing entries appear in the model picker: `all` (cheapest + fastest + per-provider), `cheapest`, or `fastest` |
+| `huggingface.defaultTemperature` | `0.7` | Default sampling temperature when the caller does not specify one |
+| `huggingface.maxOutputTokens` | `4096` | Default max output tokens when the caller does not specify one |
+| `huggingface.includeNonToolModels` | `false` | Show models that don't support tool calling in the model picker |
+| `huggingface.modelCacheTtlMinutes` | `5` | How long (in minutes) to cache the model list before re-fetching |
+
+### Model caching
+The model list is cached locally for `huggingface.modelCacheTtlMinutes` minutes, reducing unnecessary API requests. Use the **Refresh** command or change the `routing`/`includeNonToolModels` setting to invalidate the cache immediately.
+
+---
+
 ## Requirements
 * VS Code 1.104.0 or higher.
 * Hugging Face access token with `inference.serverless` permissions.

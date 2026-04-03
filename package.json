@@ -49,8 +49,58 @@
 			{
 				"command": "huggingface.manage",
 				"title": "Manage Hugging Face Provider"
+			},
+			{
+				"command": "huggingface.clearApiKey",
+				"title": "Clear Hugging Face API Key"
+			},
+			{
+				"command": "huggingface.refreshModels",
+				"title": "Refresh Hugging Face Model List"
 			}
-		]
+		],
+		"configuration": {
+			"title": "Hugging Face",
+			"properties": {
+				"huggingface.routing": {
+					"type": "string",
+					"enum": ["all", "cheapest", "fastest"],
+					"enumDescriptions": [
+						"Show all provider-specific entries plus cheapest and fastest shortcuts",
+						"Show only the cheapest-provider entry for each model",
+						"Show only the fastest-provider entry for each model"
+					],
+					"default": "all",
+					"description": "Controls which routing-mode model entries appear in the model picker."
+				},
+				"huggingface.defaultTemperature": {
+					"type": "number",
+					"default": 0.7,
+					"minimum": 0,
+					"maximum": 2,
+					"description": "Default sampling temperature used when the caller does not specify one."
+				},
+				"huggingface.maxOutputTokens": {
+					"type": "number",
+					"default": 4096,
+					"minimum": 1,
+					"maximum": 16000,
+					"description": "Default maximum number of output tokens when the caller does not specify one."
+				},
+				"huggingface.includeNonToolModels": {
+					"type": "boolean",
+					"default": false,
+					"description": "Include models that do not support tool calling in the model picker."
+				},
+				"huggingface.modelCacheTtlMinutes": {
+					"type": "number",
+					"default": 5,
+					"minimum": 1,
+					"maximum": 60,
+					"description": "How long (in minutes) to cache the model list fetched from Hugging Face before re-fetching."
+				}
+			}
+		}
 	},
 	"main": "./out/extension.js",
 	"scripts": {
