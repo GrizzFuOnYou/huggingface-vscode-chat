@@ -22,10 +22,10 @@ export function activate(context: vscode.ExtensionContext) {
 	async function updateStatusBar() {
 		const key = await context.secrets.get("huggingface.apiKey");
 		if (key) {
-			statusBar.text = "$(hubot) HF $(check)";
+			statusBar.text = "$(sparkle) HF $(check)";
 			statusBar.tooltip = "Hugging Face – API key is set. Click to update.";
 		} else {
-			statusBar.text = "$(hubot) HF $(warning)";
+			statusBar.text = "$(sparkle) HF $(warning)";
 			statusBar.tooltip = "Hugging Face – No API key. Click to set one.";
 		}
 		statusBar.show();

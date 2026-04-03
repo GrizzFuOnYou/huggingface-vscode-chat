@@ -171,16 +171,16 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				if (routing === "all") {
 					for (const p of toolProviders) {
 						const contextLen = p?.context_length ?? DEFAULT_CONTEXT_LENGTH;
-						const pMaxOutput = DEFAULT_MAX_OUTPUT_TOKENS;
-						const pMaxInput = Math.max(1, contextLen - pMaxOutput);
+						const providerMaxOutput = DEFAULT_MAX_OUTPUT_TOKENS;
+						const providerMaxInput = Math.max(1, contextLen - providerMaxOutput);
 						entries.push({
 							id: `${m.id}:${p.provider}`,
 							name: `${m.id} via ${p.provider}`,
 							tooltip: `Hugging Face via ${p.provider}`,
 							family: "huggingface",
 							version: "1.0.0",
-							maxInputTokens: pMaxInput,
-							maxOutputTokens: pMaxOutput,
+							maxInputTokens: providerMaxInput,
+							maxOutputTokens: providerMaxOutput,
 							capabilities: {
 								toolCalling: true,
 								imageInput: vision,
@@ -323,6 +323,8 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				throw new Error("Hugging Face API key not found");
 			}
 
+			const cfg = vscode.workspace.getConfiguration("huggingface");
+
             const openaiMessages = convertMessages(messages);
 
 			validateRequest(messages);
@@ -346,12 +348,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
                 messages: openaiMessages,
                 stream: true,
                 max_tokens: Math.min(
-					options.modelOptions?.max_tokens ||
-						vscode.workspace.getConfiguration("huggingface").get<number>("maxOutputTokens", 4096),
+					options.modelOptions?.max_tokens || cfg.get<number>("maxOutputTokens", 4096),
 					model.maxOutputTokens
 				),
-                temperature: options.modelOptions?.temperature ??
-					vscode.workspace.getConfiguration("huggingface").get<number>("defaultTemperature", 0.7),
+                temperature: options.modelOptions?.temperature ?? cfg.get<number>("defaultTemperature", 0.7),
             };
 
 			// Allow-list model options
